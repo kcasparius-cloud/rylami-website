@@ -1,0 +1,291 @@
+<?php
+/**
+ * Square payment webhook for BOHC digital resources.
+ * Verifies Square's HMAC signature before trusting payment data.
+ * Fulfillment occurs only for a COMPLETED payment with the exact expected amount.
+ */
+
+require __DIR__ . '/store.php';
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    exit('Method not allowed.');
+}
+
+$squareConfigPath = '/home/nhnqsp8jasbe/bohc-square-config.php';
+$webhookConfigPath = '/home/nhnqsp8jasbe/bohc-square-webhook-config.php';
+$dbConfigPath = '/home/nhnqsp8jasbe/bohc-db-config.php';
+$resendConfigPath = '/home/nhnqsp8jasbe/bohc-resend-config.php';
+
+if (!is_readable($squareConfigPath) || !is_readable($dbConfigPath) || !is_readable($resendConfigPath)) {
+    error_log('BOHC resource webhook configuration missing.');
+    http_response_code(503);
+    exit('Configuration unavailable.');
+}
+
+$square = require $squareConfigPath;
+$webhook = is_readable($webhookConfigPath) ? require $webhookConfigPath : [];
+$db = require $dbConfigPath;
+$resend = require $resendConfigPath;
+
+$signatureKey = trim((string)($webhook['webhook_signature_key'] ?? $square['webhook_signature_key'] ?? ''));
+$notificationUrl = trim((string)($webhook['webhook_url'] ?? $square['webhook_url'] ?? 'https://teamcasparius.com/BoHC/resources/square-webhook.php'));
+$signature = trim((string)($_SERVER['HTTP_X_SQUARE_HMACSHA256_SIGNATURE'] ?? ''));
+$body = file_get_contents('php://input');
+
+if ($signatureKey === '' || $notificationUrl === '' || $signature === '' || $body === false) {
+    error_log('BOHC resource webhook signature configuration incomplete.');
+    http_response_code(503);
+    exit('Webhook unavailable.');
+}
+
+$expected = base64_encode(hash_hmac('sha256', $notificationUrl . $body, $signatureKey, true));
+if (!hash_equals($expected, $signature)) {
+    error_log('BOHC resource webhook rejected invalid Square signature.');
+    http_response_code(403);
+    exit('Invalid signature.');
+}
+
+$event = json_decode($body, true);
+if (!is_array($event)) {
+    http_response_code(400);
+    exit('Invalid JSON.');
+}
+
+$eventType = (string)($event['type'] ?? '');
+if (!in_array($eventType, ['payment.created', 'payment.updated'], true)) {
+    http_response_code(200);
+    exit('Ignored.');
+}
+
+$payment = $event['data']['object']['payment'] ?? null;
+if (!is_array($payment)) {
+    http_response_code(200);
+    exit('No payment object.');
+}
+
+$status = (string)($payment['status'] ?? '');
+if ($status !== 'COMPLETED') {
+    http_response_code(200);
+    exit('Payment not completed.');
+}
+
+$squarePaymentId = trim((string)($payment['id'] ?? ''));
+$squareOrderId = trim((string)($payment['order_id'] ?? ''));
+$paidAmount = (int)($payment['amount_money']['amount'] ?? -1);
+$paidCurrency = strtoupper(trim((string)($payment['amount_money']['currency'] ?? '')));
+
+if ($squarePaymentId === '' || $squareOrderId === '' || $paidAmount < 0 || $paidCurrency === '') {
+    error_log('BOHC resource webhook received incomplete completed payment data.');
+    http_response_code(200);
+    exit('Incomplete payment data.');
+}
+
+try {
+    $pdo = new PDO(
+        'mysql:host=' . trim((string)($db['host'] ?? 'localhost'))
+            . ';dbname=' . trim((string)($db['database'] ?? ''))
+            . ';charset=utf8mb4',
+        trim((string)($db['username'] ?? '')),
+        (string)($db['password'] ?? ''),
+        [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ]
+    );
+} catch (Throwable $e) {
+    error_log('BOHC resource webhook DB connection failed: ' . $e->getMessage());
+    http_response_code(500);
+    exit('Database unavailable.');
+}
+
+try {
+    // Hold a connection-scoped lock through email delivery; a crashed process releases it.
+    $lockName = 'resource-' . substr(hash('sha256', $squareOrderId), 0, 48);
+    $lock = $pdo->prepare('SELECT GET_LOCK(?, 0)');
+    $lock->execute([$lockName]);
+    if ((int)$lock->fetchColumn() !== 1) {
+        http_response_code(503); exit('Delivery busy; retry notification.');
+    }
+    $pdo->beginTransaction();
+    $stmt = $pdo->prepare('SELECT * FROM resource_orders WHERE square_order_id = :square_order_id FOR UPDATE');
+    $stmt->execute([':square_order_id' => $squareOrderId]);
+    $order = $stmt->fetch();
+
+    if (!$order) {
+        $pdo->commit();
+        error_log('BOHC resource webhook could not match Square order ' . $squareOrderId);
+        http_response_code(503);
+        exit('Order not matched yet; retry notification.');
+    }
+
+    if ($order['delivery_status'] === 'Sent') {
+        $pdo->commit();
+        http_response_code(200);
+        exit('Already fulfilled.');
+    }
+
+    // A previous Sending attempt may have crashed. Resume under the database lock.
+
+    $expectedAmount = (int)$order['total_cents'];
+    $expectedCurrency = strtoupper((string)$order['currency']);
+    if ($paidAmount !== $expectedAmount || $paidCurrency !== $expectedCurrency) {
+        $update = $pdo->prepare("UPDATE resource_orders SET payment_status = 'Failed', delivery_status = 'Failed', delivery_error = :error, square_payment_id = :payment_id WHERE id = :id");
+        $update->execute([
+            ':error' => 'Square completed payment did not match the expected order total.',
+            ':payment_id' => $squarePaymentId,
+            ':id' => $order['id'],
+        ]);
+        $pdo->commit();
+        error_log('BOHC resource payment total mismatch for order ID ' . $order['id']);
+        http_response_code(200);
+        exit('Payment mismatch.');
+    }
+
+    $products = json_decode((string)$order['products_json'], true);
+    if (!is_array($products) || !$products) {
+        throw new RuntimeException('Order product list is invalid.');
+    }
+
+    $productCatalog = store_catalog();
+    $store = store_info($order['storefront'] ?? 'beacon');
+
+    $names = [];
+    $missing = [];
+    foreach ($products as $slug) {
+        $slug = (string)$slug;
+        if (!isset($productCatalog[$slug])) {
+            $missing[] = $slug;
+            continue;
+        }
+        $names[] = $productCatalog[$slug]['name'];
+        if (!is_readable($productCatalog[$slug]['file'])) {
+            $missing[] = $productCatalog[$slug]['name'];
+        }
+    }
+
+    if ($missing) {
+        $errorText = 'Private product file unavailable: ' . implode(', ', $missing);
+        $update = $pdo->prepare("UPDATE resource_orders SET payment_status = 'Paid', paid_at = COALESCE(paid_at, UTC_TIMESTAMP()), square_payment_id = :payment_id, delivery_status = 'Failed', delivery_error = :error WHERE id = :id");
+        $update->execute([
+            ':payment_id' => $squarePaymentId,
+            ':error' => substr($errorText, 0, 500),
+            ':id' => $order['id'],
+        ]);
+        $pdo->commit();
+        error_log('BOHC resource fulfillment stopped because product file is missing for order ID ' . $order['id']);
+        http_response_code(500);
+        exit('Product file unavailable.');
+    }
+
+    // Stable secret and token keep email retries byte-for-byte consistent.
+    $secretPath = '/home/nhnqsp8jasbe/bohc-download-secret.php';
+    if (!is_readable($secretPath)) { throw new RuntimeException('Download secret unavailable.'); }
+    $downloadSecret = require $secretPath;
+    if (!is_string($downloadSecret) || strlen($downloadSecret) < 64) { throw new RuntimeException('Invalid download secret.'); }
+    $downloadToken = hash_hmac('sha256', (string)$order['order_token'], $downloadSecret);
+    $downloadHash = hash('sha256', $downloadToken);
+
+    $update = $pdo->prepare("UPDATE resource_orders SET payment_status = 'Paid', paid_at = COALESCE(paid_at, UTC_TIMESTAMP()), square_payment_id = :payment_id, delivery_status = 'Sending', delivery_error = NULL, download_token_hash = :token_hash, download_expires_at = COALESCE(download_expires_at, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 14 DAY)) WHERE id = :id");
+    $update->execute([
+        ':payment_id' => $squarePaymentId,
+        ':token_hash' => $downloadHash,
+        ':id' => $order['id'],
+    ]);
+    $pdo->commit();
+} catch (Throwable $e) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    error_log('BOHC resource webhook processing failed: ' . $e->getMessage());
+    http_response_code(500);
+    exit('Fulfillment processing failed.');
+}
+
+$apiKey = trim((string)($resend['api_key'] ?? ''));
+$fromEmail = trim((string)($resend['from_email'] ?? ''));
+$fromName = $store['name'];
+$buyerEmail = trim((string)$order['buyer_email']);
+
+if ($apiKey === '' || $fromEmail === '' || !filter_var($buyerEmail, FILTER_VALIDATE_EMAIL)) {
+    $errorText = 'Email delivery configuration is incomplete.';
+    $stmt = $pdo->prepare("UPDATE resource_orders SET delivery_status = 'Failed', delivery_error = :error WHERE id = :id");
+    $stmt->execute([':error' => $errorText, ':id' => $order['id']]);
+    error_log('BOHC resource fulfillment Resend configuration incomplete for order ID ' . $order['id']);
+    http_response_code(500);
+    exit('Email delivery unavailable.');
+}
+
+$downloadUrl = $store['base'] . '/resources/download.php?token=' . rawurlencode($downloadToken);
+$productList = '- ' . implode("\n- ", $names);
+$subject = count($names) > 1
+    ? 'Your ' . $store['name'] . ' resources are ready'
+    : 'Your ' . $store['name'] . ' resource is ready';
+
+$text = "Thank you for your purchase from " . $store['name'] . ".\n\n"
+    . "Your purchased resource" . (count($names) > 1 ? 's are' : ' is') . ":\n"
+    . $productList . "\n\n"
+    . "Download your resource" . (count($names) > 1 ? 's' : '') . " here:\n"
+    . $downloadUrl . "\n\n"
+    . "For security, this download link expires in 14 days.\n\n"
+    . "These materials are educational resources and do not replace therapy, legal advice, or individualized professional guidance.\n\n"
+    . "Beacon of Hope Counseling\n910-859-8166";
+
+$payload = json_encode([
+    'from' => $fromName . ' <' . $fromEmail . '>',
+    'to' => [$buyerEmail],
+    'subject' => $subject,
+    'text' => $text,
+], JSON_UNESCAPED_SLASHES);
+
+if ($payload === false) {
+    $stmt = $pdo->prepare("UPDATE resource_orders SET delivery_status = 'Failed', delivery_error = :error WHERE id = :id");
+    $stmt->execute([':error' => 'Could not prepare delivery email.', ':id' => $order['id']]);
+    http_response_code(500);
+    exit('Email preparation failed.');
+}
+
+$ch = curl_init('https://api.resend.com/emails');
+curl_setopt_array($ch, [
+    CURLOPT_POST => true,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER => [
+        'Authorization: Bearer ' . $apiKey,
+        'Content-Type: application/json',
+        'User-Agent: Rylami-Resource-Delivery/1.0',
+        'Idempotency-Key: resource-delivery-' . $order['order_token'],
+    ],
+    CURLOPT_POSTFIELDS => $payload,
+    CURLOPT_TIMEOUT => 20,
+    CURLOPT_CONNECTTIMEOUT => 10,
+]);
+
+$response = curl_exec($ch);
+$curlError = curl_error($ch);
+$httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+curl_close($ch);
+
+if ($response === false || $curlError !== '' || $httpCode < 200 || $httpCode >= 300) {
+    error_log('BOHC resource Resend failure. HTTP ' . $httpCode . ' ' . $curlError . ' ' . (string)$response);
+    $stmt = $pdo->prepare("UPDATE resource_orders SET delivery_status = 'Failed', delivery_error = :error WHERE id = :id");
+    $stmt->execute([':error' => 'Resend could not send the delivery email.', ':id' => $order['id']]);
+    http_response_code(500);
+    exit('Email delivery failed.');
+}
+
+$decoded = json_decode((string)$response, true);
+$messageId = is_array($decoded) ? trim((string)($decoded['id'] ?? '')) : '';
+
+if ($messageId === '') {
+    http_response_code(503); exit('Email service response incomplete; retry notification.');
+}
+
+$stmt = $pdo->prepare("UPDATE resource_orders SET delivery_status = 'Sent', delivered_at = UTC_TIMESTAMP(), resend_message_id = :message_id, delivery_error = NULL WHERE id = :id AND delivery_status = 'Sending'");
+$stmt->execute([
+    ':message_id' => $messageId !== '' ? $messageId : null,
+    ':id' => $order['id'],
+]);
+
+http_response_code(200);
+echo 'Fulfilled.';

@@ -1,0 +1,55 @@
+<?php
+require __DIR__ . '/store.php';
+store_headers();
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); header('Allow: POST'); exit('Method not allowed.'); }
+try {
+    // The wrapper supplies the storefront; arbitrary return URLs are never accepted.
+    $storefront = defined('RESOURCE_STOREFRONT') ? RESOURCE_STOREFRONT : 'beacon';
+    $store = store_info($storefront);
+    $configPath = '/home/nhnqsp8jasbe/bohc-square-config.php';
+    if (!is_readable($configPath)) { throw new RuntimeException('Checkout configuration unavailable.'); }
+    $config = require $configPath;
+    $environment = $config['environment'] ?? 'sandbox';
+    if (!in_array($environment, ['sandbox', 'production'], true)) { throw new RuntimeException('Invalid Square environment.'); }
+    $accessToken = trim((string)($config['access_token'] ?? ''));
+    $locationId = trim((string)($config['location_id'] ?? ''));
+    if ($accessToken === '' || $locationId === '') { throw new RuntimeException('Square configuration incomplete.'); }
+    $emailInput = $_POST['email'] ?? '';
+    $email = is_string($emailInput) ? trim($emailInput) : '';
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 254) { http_response_code(400); exit('Please enter a valid email address.'); }
+    $submitted = $_POST['products'] ?? [];
+    if (!is_array($submitted)) { http_response_code(400); exit('Invalid resource selection.'); }
+    if (!$submitted && isset($_POST['product']) && is_string($_POST['product'])) { $submitted = [$_POST['product']]; }
+    $catalog = store_catalog(); $selected = [];
+    foreach ($submitted as $id) {
+        if (!is_string($id) || !isset($catalog[$id]) || !is_int($catalog[$id]['amount'])) { http_response_code(400); exit('This resource is not currently available for purchase.'); }
+        $selected[$id] = $id;
+    }
+    if (!$selected) { http_response_code(400); exit('Please select a resource.'); }
+    $selected = array_values($selected); $total = 0; $items = [];
+    foreach ($selected as $id) {
+        $item = $catalog[$id]; $total += $item['amount'];
+        if (!is_file($item['file']) || !is_readable($item['file'])) { throw new RuntimeException('Product file unavailable.'); }
+        $items[] = ['name' => $item['name'], 'quantity' => '1', 'base_price_money' => ['amount' => $item['amount'], 'currency' => 'USD']];
+    }
+    $pdo = store_db(); $token = bin2hex(random_bytes(32));
+    $stmt = $pdo->prepare("INSERT INTO resource_orders (order_token, buyer_email, products_json, total_cents, currency, payment_status, delivery_status, storefront) VALUES (?, ?, ?, ?, 'USD', 'Pending', 'Pending', ?)");
+    $stmt->execute([$token, $email, json_encode($selected, JSON_THROW_ON_ERROR), $total, $storefront]);
+    $localId = (int)$pdo->lastInsertId();
+    $payload = ['idempotency_key' => $token, 'order' => ['location_id' => $locationId, 'line_items' => $items], 'checkout_options' => ['redirect_url' => $store['base'] . '/resources/purchase-complete.php?order=' . rawurlencode($token)], 'pre_populated_data' => ['buyer_email' => $email]];
+    $base = $environment === 'production' ? 'https://connect.squareup.com' : 'https://connect.squareupsandbox.com';
+    $ch = curl_init($base . '/v2/online-checkout/payment-links');
+    curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_RETURNTRANSFER => true, CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $accessToken, 'Content-Type: application/json', 'Accept: application/json'], CURLOPT_POSTFIELDS => json_encode($payload, JSON_THROW_ON_ERROR), CURLOPT_TIMEOUT => 20, CURLOPT_CONNECTTIMEOUT => 10]);
+    $response = curl_exec($ch); $http = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+    if ($response === false || $http < 200 || $http >= 300) { throw new RuntimeException('Square checkout request failed.'); }
+    $data = json_decode($response, true, 512, JSON_THROW_ON_ERROR); $link = $data['payment_link'] ?? [];
+    $url = $link['url'] ?? ''; $squareOrder = $link['order_id'] ?? ($data['related_resources']['orders'][0]['id'] ?? '');
+    if ($url === '' || empty($link['id']) || $squareOrder === '' || parse_url($url, PHP_URL_SCHEME) !== 'https') { throw new RuntimeException('Square checkout response incomplete.'); }
+    $stmt = $pdo->prepare("UPDATE resource_orders SET square_payment_link_id = ?, square_order_id = ? WHERE id = ? AND payment_status = 'Pending'");
+    $stmt->execute([$link['id'], $squareOrder, $localId]);
+    if ($stmt->rowCount() !== 1) { throw new RuntimeException('Could not track checkout.'); }
+    header('Location: ' . $url, true, 303); exit;
+} catch (Throwable $error) {
+    error_log('Resource checkout failed: ' . $error->getMessage());
+    http_response_code(503); exit('Checkout is temporarily unavailable. Please try again later.');
+}

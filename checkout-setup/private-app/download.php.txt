@@ -1,0 +1,32 @@
+<?php
+require __DIR__ . '/store.php';
+store_headers();
+$storefront = defined('RESOURCE_STOREFRONT') ? RESOURCE_STOREFRONT : 'beacon';
+$store = store_info($storefront); $catalog = store_catalog();
+$token = isset($_GET['token']) && is_string($_GET['token']) ? trim($_GET['token']) : '';
+if (!preg_match('/^[a-f0-9]{64}$/', $token)) { http_response_code(404); exit('Download link not found.'); }
+try {
+    $pdo = store_db();
+    $stmt = $pdo->prepare("SELECT * FROM resource_orders WHERE download_token_hash = ? AND payment_status = 'Paid' AND storefront = ? LIMIT 1");
+    $stmt->execute([hash('sha256', $token), $storefront]); $order = $stmt->fetch();
+    if (!$order) { http_response_code(404); exit('Download link not found.'); }
+    $expires = empty($order['download_expires_at']) ? false : strtotime($order['download_expires_at'] . ' UTC');
+    if ($expires === false || $expires < time()) { http_response_code(410); exit('This download link has expired. Please contact Beacon of Hope Counseling at 910-859-8166.'); }
+    $products = json_decode($order['products_json'], true, 512, JSON_THROW_ON_ERROR);
+    if (!is_array($products) || !$products) { throw new RuntimeException('Invalid product list.'); }
+    $product = isset($_GET['product']) && is_string($_GET['product']) ? trim($_GET['product']) : '';
+    if ($product !== '') {
+        if (!in_array($product, $products, true) || !isset($catalog[$product])) { http_response_code(404); exit('Resource not found.'); }
+        $file = $catalog[$product]['file'];
+        if (!is_file($file) || !is_readable($file)) { throw new RuntimeException('Product file unavailable.'); }
+        $stmt = $pdo->prepare('UPDATE resource_orders SET download_count = download_count + 1, last_downloaded_at = UTC_TIMESTAMP() WHERE id = ?'); $stmt->execute([$order['id']]);
+        header('Content-Type: application/pdf'); header('Content-Disposition: attachment; filename="' . $catalog[$product]['download_name'] . '"'); header('Content-Length: ' . filesize($file)); readfile($file); exit;
+    }
+    store_start_page($store, 'Your Downloads'); echo '<h1>Your downloads are ready.</h1><ul>';
+    foreach ($products as $slug) {
+        if (is_string($slug) && isset($catalog[$slug])) { echo '<li>' . e($catalog[$slug]['name']) . '<br><a class="button" href="download.php?token=' . e($token) . '&amp;product=' . e($slug) . '">Download PDF</a></li>'; }
+    }
+    echo '</ul><p class="note">Your link expires 14 days after it is first prepared.</p>'; store_end_page($store);
+} catch (Throwable $error) {
+    error_log('Resource download failed: ' . $error->getMessage()); http_response_code(503); exit('Download service temporarily unavailable. Please contact us for help.');
+}

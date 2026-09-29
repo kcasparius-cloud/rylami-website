@@ -1,0 +1,27 @@
+<?php
+require __DIR__ . '/store.php';
+$storefront = defined('RESOURCE_STOREFRONT') ? RESOURCE_STOREFRONT : 'beacon';
+$store = store_info($storefront); $order = null;
+$token = isset($_GET['order']) && is_string($_GET['order']) ? trim($_GET['order']) : '';
+try {
+    if (preg_match('/^[a-f0-9]{64}$/', $token)) {
+        $pdo = store_db(); $stmt = $pdo->prepare('SELECT payment_status, delivery_status FROM resource_orders WHERE order_token = ? AND storefront = ? LIMIT 1');
+        $stmt->execute([$token, $storefront]); $order = $stmt->fetch() ?: null;
+    }
+} catch (Throwable $error) { error_log('Resource confirmation lookup failed: ' . $error->getMessage()); }
+$waiting = $order && $order['payment_status'] !== 'Failed' && in_array($order['delivery_status'], ['Pending', 'Sending'], true);
+store_start_page($store, 'Purchase Status', $waiting);
+if (!$order) {
+    echo '<h1>We could not match this checkout.</h1><p>If you paid, keep your Square receipt and contact us for help.</p>';
+} elseif ($order['payment_status'] === 'Paid' && $order['delivery_status'] === 'Sent') {
+    echo '<h1>Your download email is on the way.</h1><p>Your payment was confirmed and the email service accepted your download email. Check your inbox and spam folder for your protected download link.</p>';
+} elseif ($order['payment_status'] === 'Failed') {
+    echo '<h1>Your payment needs checking.</h1><p>Please contact us with your Square receipt before submitting another payment.</p>';
+} elseif ($order['payment_status'] === 'Paid' && $order['delivery_status'] === 'Failed') {
+    echo '<h1>Your payment was received.</h1><p>We encountered a problem preparing your download email. Please contact us for help. You do not need to pay again.</p>';
+} elseif ($order['payment_status'] === 'Paid') {
+    echo '<h1>Your payment was received.</h1><p>We are preparing your protected download email. This page checks the status automatically.</p>';
+} else {
+    echo '<h1>We are checking your payment.</h1><p>Returning from checkout does not by itself confirm payment. This page checks automatically. If the status does not change within a few minutes, contact us; do not submit payment again.</p>';
+}
+store_end_page($store);
