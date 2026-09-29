@@ -17,6 +17,6 @@ footer{background:#e6dfd1;padding:65px 28px 22px}.footer-inner{max-width:1160px;
 /* Launch-readiness additions */
 .skip-link{position:absolute;left:-9999px;top:auto}.skip-link:focus{left:16px;top:16px;z-index:100;background:white;padding:10px 14px;border:2px solid var(--deep)}
 :focus-visible{outline:3px solid var(--clay);outline-offset:3px}
-.site-header nav a[aria-current="page"]{color:var(--deep);border-bottom:2px solid var(--clay);padding-bottom:4px}
+.site-header nav a[aria-current="page"]{color:var(--deep);border-bottom:2px solid #5d8793;padding-bottom:4px}
 .error-page{min-height:65vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:70px 28px;background:var(--cream)}.error-page>div{max-width:650px}.error-code{font-family:"Playfair Display";font-size:6rem;line-height:1;color:var(--sage);opacity:.45;margin-bottom:15px}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
