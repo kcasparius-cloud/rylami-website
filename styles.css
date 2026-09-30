@@ -59,3 +59,32 @@ footer{background:#e6dfd1;padding:65px 28px 22px}.footer-inner{max-width:1160px;
   .category-card p{font-size:.86rem}
   .library-note{margin-top:22px;padding:22px 20px}
 }
+
+/* Resource library mobile spacing polish */
+@media(max-width:800px){
+  /* Remove oversized gaps between the featured resource and browse section */
+  .resource-feature{margin-bottom:0}
+  .content-section:has(.resource-feature){padding-bottom:42px}
+  .content-section:has(.category-list){padding-top:52px;padding-bottom:54px}
+
+  /* Make the category library quicker and calmer to scan */
+  .category-list{gap:10px}
+  .category-card{padding:18px 18px 17px}
+  .category-card>span{font-size:1.25rem}
+  .category-card h3{margin:8px 0 4px;font-size:1.04rem}
+  .category-card p{line-height:1.52;margin-bottom:0}
+  .category-link small{margin-top:12px}
+
+  /* Keep the growing-library note visually distinct without excess height */
+  .library-note{margin-top:18px;padding:20px 18px}
+  .library-note p{line-height:1.55}
+  .library-note .text-link{margin-top:0}
+
+  /* Compact mobile footer while preserving comfortable tap targets */
+  footer{padding:42px 28px 18px}
+  .footer-inner{gap:24px}
+  .footer-inner>div{gap:5px}
+  .footer-inner p{margin:6px 0 4px}
+  .footer-inner a{padding:3px 0}
+  .copyright{margin-top:28px;padding-top:16px}
+}
