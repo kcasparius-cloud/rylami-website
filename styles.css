@@ -35,3 +35,27 @@ footer{background:#e6dfd1;padding:65px 28px 22px}.footer-inner{max-width:1160px;
 /* Resource library refinement */
 .resource-cover-link{display:flex;align-items:center;justify-content:center;min-height:410px;text-decoration:none}.resource-real-cover{width:min(100%,260px);height:auto;display:block;box-shadow:0 24px 48px rgba(42,60,49,.22);transition:transform .2s ease,box-shadow .2s ease}.resource-cover-link:hover .resource-real-cover{transform:translateY(-4px);box-shadow:0 30px 58px rgba(42,60,49,.27)}.resource-badges{display:flex;flex-wrap:wrap;gap:8px;margin:24px 0}.resource-badges span{font-size:.68rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--deep);background:rgba(255,255,255,.72);border:1px solid rgba(53,74,61,.12);padding:7px 10px;border-radius:999px}.category-link{text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.category-link:hover{transform:translateY(-3px);box-shadow:0 13px 28px rgba(53,74,61,.08)}.category-link small{display:block;margin-top:18px;color:var(--sage);font-weight:700}.library-note{margin-top:32px;padding:32px}.library-note p{max-width:760px}.library-note .text-link{margin-top:3px}
 @media(max-width:800px){.resource-cover-link{min-height:0;padding:10px 0 20px}.resource-real-cover{width:min(76%,250px)}.resource-feature>div{text-align:center}.resource-badges{justify-content:center}.library-note{padding:26px 22px}}
+
+/* Resource library mobile scale */
+@media(max-width:800px){
+  .page-hero{padding:58px 22px 62px}
+  .page-hero h1{font-size:clamp(2.15rem,10vw,3rem);line-height:1.08}
+  .page-hero p{font-size:.96rem;line-height:1.6}
+  .resource-feature{gap:24px;padding:26px 20px}
+  .resource-cover-link{padding:0 0 8px}
+  .resource-real-cover{width:min(62%,220px)}
+  .resource-feature h2{font-size:2rem;margin-bottom:10px}
+  .resource-feature h3{font-size:1.08rem!important}
+  .resource-feature p{font-size:.92rem}
+  .resource-badges{margin:18px 0;gap:6px}
+  .resource-badges span{font-size:.61rem;padding:6px 8px}
+  .content-section{padding:58px 20px}
+  .section-heading{margin-bottom:34px}
+  .section-heading h2{font-size:2rem}
+  .section-heading p{font-size:.94rem}
+  .category-list{gap:12px;margin-top:30px}
+  .category-card{padding:22px 20px}
+  .category-card h3{font-size:1.08rem;margin:12px 0 6px}
+  .category-card p{font-size:.86rem}
+  .library-note{margin-top:22px;padding:22px 20px}
+}
