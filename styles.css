@@ -20,3 +20,10 @@ footer{background:#e6dfd1;padding:65px 28px 22px}.footer-inner{max-width:1160px;
 .site-header nav a[aria-current="page"]{color:var(--deep);border-bottom:2px solid #5d8793;padding-bottom:4px}
 .error-page{min-height:65vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:70px 28px;background:var(--cream)}.error-page>div{max-width:650px}.error-code{font-family:"Playfair Display";font-size:6rem;line-height:1;color:var(--sage);opacity:.45;margin-bottom:15px}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+
+/* Homepage product presentation */
+.real-cover-scene{text-decoration:none;cursor:pointer}
+.homepage-product-cover{position:relative;z-index:3;width:min(68%,285px);height:auto;display:block;box-shadow:0 26px 52px rgba(42,60,49,.25);transform:rotate(-1deg);transition:transform .22s ease,box-shadow .22s ease;border-radius:2px}
+.real-cover-scene:hover .homepage-product-cover{transform:rotate(0) translateY(-5px);box-shadow:0 32px 60px rgba(42,60,49,.29)}
+@media(max-width:800px){.homepage-product-cover{width:min(72%,270px);transform:none}.real-cover-scene:hover .homepage-product-cover{transform:translateY(-3px)}}
