@@ -134,3 +134,22 @@ footer{padding-top:45px}
  .content-section{padding:40px 18px}.resource-feature{gap:20px;padding:22px 18px}.resource-real-cover{width:min(58%,190px)}
  .library-coming{padding:22px 20px}.library-coming strong{display:block;margin:0 0 6px}
 }
+
+
+/* Minimalist site-wide spacing pass */
+.resource-buy-actions{justify-content:center;margin-top:18px}
+.resource-buy-actions .button{margin:0}
+@media(min-width:801px){
+  .page-hero{padding:64px 28px}
+  .contact-main{padding-top:60px;padding-bottom:64px}
+  .about-approach{padding-top:64px;padding-bottom:64px}
+  .about-distinction{padding-top:56px;padding-bottom:56px}
+  .about-product-cta{padding-top:58px;padding-bottom:58px}
+}
+@media(max-width:800px){
+  .page-hero:not(.compact-hero){padding:46px 20px 50px}
+  .page-hero:not(.compact-hero) h1{margin-bottom:12px}
+  .content-section{padding-top:46px;padding-bottom:46px}
+  .resource-buy-actions{max-width:280px;margin:18px auto 0}
+  .resource-buy-actions .button{width:100%;text-align:center}
+}
