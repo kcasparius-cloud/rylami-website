@@ -137,7 +137,7 @@ footer{padding-top:45px}
 
 
 /* Minimalist site-wide spacing pass */
-.resource-buy-actions{justify-content:center;margin-top:18px}
+.resource-buy-actions{justify-content:center;margin:18px auto 0;text-align:center}
 .resource-buy-actions .button{margin:0}
 @media(min-width:801px){
   .page-hero{padding:64px 28px}
