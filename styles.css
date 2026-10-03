@@ -153,3 +153,8 @@ footer{padding-top:45px}
   .resource-buy-actions{max-width:280px;margin:18px auto 0}
   .resource-buy-actions .button{width:100%;text-align:center}
 }
+
+/* Resources purchase CTA: center the button itself, independent of shared action wrappers */
+.resource-copy{display:flex;flex-direction:column}
+.resource-direct-buy{display:block;width:max-content;max-width:100%;align-self:center;margin:18px auto 0;text-align:center}
+@media(max-width:800px){.resource-direct-buy{width:min(100%,280px)}}
